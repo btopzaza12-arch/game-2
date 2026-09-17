@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Root Exponential Expansion Game</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+        body {
+            background-color: #1a1510;
+            color: #f0e6d2;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #4a3b2c;
+        }
+        canvas {
+            display: block;
+            background: linear-gradient(to bottom, #87CEEB 0%, #87CEEB 15%, #4a3319 15%, #261709 100%);
+        }
+        #ui-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: none;
+        }
+        .stats-card {
+            background: rgba(20, 15, 10, 0.75);
+            backdrop-filter: blur(5px);
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid #6b523b;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .stats-card h3 {
+            color: #4CAF50;
+            margin-bottom: 5px;
+            font-size: 16px;
+        }
+        .highlight {
+            color: #FFD700;
+            font-weight: bold;
+        }
+        .controls-card {
+            pointer-events: auto;
+            background: rgba(20, 15, 10, 0.85);
+            backdrop-filter: blur(5px);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #6b523b;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: #45a049;
+            transform: scale(1.02);
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            transform: none;
+        }
+        #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            backdrop-filter: blur(4px);
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <!-- UI Overlay -->
+    <div id="ui-panel">
+        <div class="stats-card">
+            <h3>🌳 Root System Status</h3>
+            <div>ระดับความลึก (Depth Level): <span id="depth-val" class="highlight">1</span></div>
+            <div>จำนวนปลายราก ($b^d$): <span id="tips-val" class="highlight">2</span> แขนง</div>
+            <div>พลังงานสะสม (Energy): <span id="energy-val" class="highlight">100</span></div>
+            <div>อัตราการขยายตัว ($b$): <span id="branch-factor-val" class="highlight">2</span> เท่า/ชั้น</div>
+        </div>
+
+        <div class="controls-card">
+            <button id="btn-grow">🌱 แตกรากใหม่ (ใช้ Energy)</button>
+            <button id="btn-upgrade-b">⚡ เพิ่มพลังแตกแขนง ($b$+1)</button>
+        </div>
+    </div>
+
+    <!-- Game Over / Win Screen -->
+    <div id="game-over-screen" class="hidden">
+        <h1 id="go-title" style="color: #4CAF50; font-size: 36px;">ต้นไม้ของคุณเติบโตสมบูรณ์!</h1>
+        <p id="go-desc" style="font-size: 18px; text-align: center; max-width: 80%;">
+            ระบบรากแพร่ขยายแบบ Exponential ครอบคลุมใต้ดินทั้งหมด!
+        </p>
+        <button id="btn-restart" style="font-size: 18px; padding: 12px 24px;">เล่นใหม่อีกครั้ง</button>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- Game State ---
+let gameState = {
+    energy: 50,
+    depth: 1,
+    branchingFactor: 2, // b
+    maxDepth: 7,
+    waterNodes: [],
+    rootTree: null,
+    isGrowing: false,
+    gameOver: false
+};
+
+// --- Water/Nutrient Node Class ---
+class ResourceNode {
+    constructor(x, y, value) {
+        this.x = x;
+        this.y = y;
+        this.value = value;
+        this.radius = 8 + Math.random() * 6;
+        this.collected = false;
+    }
+
+    draw() {
+        if (this.collected) return;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#00BFFF';
+        ctx.shadowColor = '#00BFFF';
+        ctx.shadowBlur = 10;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.closePath();
+    }
+}
+
+// --- Root Branch Node Class ---
+class RootNode {
+    constructor(x, y, angle, length, depth, maxDepth, branchFactor) {
+        this.x = x;
+        this.y = y;
+        this.angle = angle;
+        this.targetLength = length;
+        this.currentLength = 0;
+        this.depth = depth;
+        this.maxDepth = maxDepth;
+        this.branchFactor = branchFactor;
+        this.children = [];
+        this.isFullyGrown = false;
+
+        // Calculate end point based on length
+        this.endX = this.x + Math.cos(this.angle) * this.targetLength;
+        this.endY = this.y + Math.sin(this.angle) * this.targetLength;
+    }
+
+    update(speed) {
+        if (this.currentLength < this.targetLength) {
+            this.currentLength += speed;
+            if (this.currentLength >= this.targetLength) {
+                this.currentLength = this.targetLength;
+                this.isFullyGrown = true;
+            }
+        }
+
+        // Check resource collection
+        const curX = this.x + Math.cos(this.angle) * this.currentLength;
+        const curY = this.y + Math.sin(this.angle) * this.currentLength;
+
+        gameState.waterNodes.forEach(node => {
+            if (!node.collected) {
+                const dist = Math.hypot(curX - node.x, curY - node.y);
+                if (dist < node.radius + 5) {
+                    node.collected = true;
+                    gameState.energy += node.value;
+                    updateUI();
+                }
+            }
+        });
+
+        // Update children recursively
+        this.children.forEach(child => child.update(speed));
+    }
+
+    draw() {
+        const curX = this.x + Math.cos(this.angle) * this.currentLength;
+        const curY = this.y + Math.sin(this.angle) * this.currentLength;
+
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(curX, curY);
+        
+        // Root thickness decreases with depth
+        ctx.lineWidth = Math.max(1, (gameState.maxDepth - this.depth + 1) * 1.5);
+        ctx.strokeStyle = '#D2B48C';
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        // Draw children
+        this.children.forEach(child => child.draw());
+    }
+
+    expandNextLevel() {
+        if (this.depth >= gameState.depth) return;
+
+        if (this.children.length === 0) {
+            // Calculate branching angle spread
+            const spread = Math.PI / (this.branchFactor + 1);
+            const startAngle = this.angle - (Math.PI / 3) / 2;
+            const angleStep = (Math.PI / 3) / (this.branchFactor - 1 || 1);
+
+            for (let i = 0; i < this.branchFactor; i++) {
+                let childAngle = (this.branchFactor === 1) 
+                    ? this.angle 
+                    : startAngle + (angleStep * i) + (Math.random() * 0.1 - 0.05);
+
+                // Ensure roots mostly grow downwards
+                if (childAngle < Math.PI * 0.15) childAngle = Math.PI * 0.15;
+                if (childAngle > Math.PI * 0.85) childAngle = Math.PI * 0.85;
+
+                const nextLength = this.targetLength * 0.82; // Length decay rate
+                this.children.push(new RootNode(
+                    this.endX, 
+                    this.endY, 
+                    childAngle, 
+                    nextLength, 
+                    this.depth + 1, 
+                    this.maxDepth,
+                    this.branchFactor
+                ));
+            }
+        } else {
+            this.children.forEach(child => child.expandNextLevel());
+        }
+    }
+}
+
+// --- Initialize Game ---
+function init() {
+    gameState.energy = 60;
+    gameState.depth = 1;
+    gameState.branchingFactor = 2;
+    gameState.gameOver = false;
+    
+    // Create initial trunk/root base
+    const startX = canvas.width / 2;
+    const startY = canvas.height * 0.15;
+    gameState.rootTree = new RootNode(startX, startY, Math.PI / 2, 50, 1, gameState.maxDepth, gameState.branchingFactor);
+
+    // Spawn initial resources
+    spawnResources();
+    
+    document.getElementById('game-over-screen').classList.add('hidden');
+    updateUI();
+}
+
+function spawnResources() {
+    gameState.waterNodes = [];
+    const totalNodes = 25;
+    for (let i = 0; i < totalNodes; i++) {
+        const x = 50 + Math.random() * (canvas.width - 100);
+        // Distribute resources deeper underground
+        const y = canvas.height * 0.2 + Math.random() * (canvas.height * 0.75);
+        const value = Math.floor(15 + (y / canvas.height) * 35); // Deeper = more energy
+        gameState.waterNodes.push(new ResourceNode(x, y, value));
+    }
+}
+
+// --- Draw Sky & Tree Top ---
+function drawEnvironment() {
+    // Ground surface line
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height * 0.15);
+    ctx.lineTo(canvas.width, canvas.height * 0.15);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#2d5a27';
+    ctx.stroke();
+
+    // Small Tree Top above ground
+    const centerX = canvas.width / 2;
+    const groundY = canvas.height * 0.15;
+
+    // Trunk
+    ctx.fillStyle = '#5c4033';
+    ctx.fillRect(centerX - 6, groundY - 25, 12, 25);
+
+    // Leaves
+    ctx.beginPath();
+    ctx.arc(centerX, groundY - 35, 25, 0, Math.PI * 2);
+    ctx.fillStyle = '#2e8b57';
+    ctx.fill();
+}
+
+// --- UI Updates ---
+function updateUI() {
+    const totalTips = Math.pow(gameState.branchingFactor, gameState.depth - 1);
+    const growCost = Math.floor(15 * Math.pow(1.3, gameState.depth));
+    const upgradeCost = gameState.branchingFactor * 40;
+
+    document.getElementById('depth-val').innerText = `${gameState.depth} / ${gameState.maxDepth}`;
+    document.getElementById('tips-val').innerText = totalTips;
+    document.getElementById('energy-val').innerText = Math.floor(gameState.energy);
+    document.getElementById('branch-factor-val').innerText = gameState.branchingFactor;
+
+    const btnGrow = document.getElementById('btn-grow');
+    const btnUpgrade = document.getElementById('btn-upgrade-b');
+
+    btnGrow.innerText = `🌱 แตกรากใหม่ (ใช้ ${growCost} Energy)`;
+    btnGrow.disabled = gameState.energy < growCost || gameState.depth >= gameState.maxDepth;
+
+    btnUpgrade.innerText = `⚡ เพิ่มการแตกแขนง $b$+1 (ใช้ ${upgradeCost} Energy)`;
+    btnUpgrade.disabled = gameState.energy < upgradeCost || gameState.branchingFactor >= 4;
+
+    // Check Win/Loss conditions
+    if (gameState.depth >= gameState.maxDepth && !gameState.gameOver) {
+        showGameOver(true, "ยินดีด้วย! คุณได้สร้างระบบรากอันแข็งแกร่งและแผ่ขยายแบบ Exponential ได้สมบูรณ์แบบ!");
+    } else if (gameState.energy < growCost && gameState.waterNodes.every(n => n.collected) && !gameState.gameOver) {
+        showGameOver(false, "พลังงานหมด! รากไม่สามารถเติบโตต่อได้ ลองเริ่มใหม่อีกครั้ง");
+    }
+}
+
+function showGameOver(isWin, message) {
+    gameState.gameOver = true;
+    const screen = document.getElementById('game-over-screen');
+    const title = document.getElementById('go-title');
+    const desc = document.getElementById('go-desc');
+
+    title.innerText = isWin ? "🎉 ชัยชนะแห่งการเติบโต!" : "🥀 พลังงานหมดลงแล้ว";
+    title.style.color = isWin ? "#4CAF50" : "#FF5252";
+    desc.innerText = message;
+    screen.classList.remove('hidden');
+}
+
+// --- Event Listeners ---
+document.getElementById('btn-grow').addEventListener('click', () => {
+    const growCost = Math.floor(15 * Math.pow(1.3, gameState.depth));
+    if (gameState.energy >= growCost && gameState.depth < gameState.maxDepth) {
+        gameState.energy -= growCost;
+        gameState.depth++;
+        gameState.rootTree.expandNextLevel();
+        updateUI();
+    }
+});
+
+document.getElementById('btn-upgrade-b').addEventListener('click', () => {
+    const upgradeCost = gameState.branchingFactor * 40;
+    if (gameState.energy >= upgradeCost && gameState.branchingFactor < 4) {
+        gameState.energy -= upgradeCost;
+        gameState.branchingFactor++;
+        // Update current tree branching factor
+        gameState.rootTree.branchFactor = gameState.branchingFactor;
+        updateUI();
+    }
+});
+
+document.getElementById('btn-restart').addEventListener('click', init);
+
+// --- Main Game Loop ---
+function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    drawEnvironment();
+
+    // Draw & Update Resource Nodes
+    gameState.waterNodes.forEach(node => node.draw());
+
+    // Draw & Update Roots
+    if (gameState.rootTree) {
+        gameState.rootTree.update(2); // Growth speed
+        gameState.rootTree.draw();
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+// Start Game
+init();
+gameLoop();
+</script>
+
+</body>
+</html>
